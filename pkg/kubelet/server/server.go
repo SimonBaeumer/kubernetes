@@ -19,6 +19,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -76,6 +77,7 @@ import (
 	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/component-base/metrics/prometheus/slis"
 	zpagesfeatures "k8s.io/component-base/zpages/features"
+	internalapi "k8s.io/cri-api/pkg/apis"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/cri-client/pkg/util"
 	"k8s.io/cri-streaming/pkg/streaming"
@@ -340,6 +342,7 @@ type HostInterface interface {
 	ListPodSandboxMetrics(ctx context.Context) ([]*runtimeapi.PodSandboxMetrics, error)
 	GetAllocatedPods() ([]*v1.Pod, error)
 	GetAllocatedPodByName(namespace, name string) (*v1.Pod, error)
+	GetRuntimeService() internalapi.RuntimeService
 }
 
 // NewServer initializes and configures a kubelet.Server object to handle HTTP requests.
@@ -508,10 +511,19 @@ func (s *Server) InstallAuthNotRequiredHandlers(ctx context.Context) {
 			s.getPods(logger, r1, r2)
 		}).
 		Operation("getPods"))
-	s.restfulCont.Add(ws)
 
 	s.addMetricsBucketMatcher("stats")
 	s.restfulCont.Add(stats.CreateHandlers(statsPath, s.host, s.resourceAnalyzer))
+
+	// pod IP on pod object
+	s.addMetricsBucketMatcher("/podnetwork")
+	ws = new(restful.WebService)
+	ws.Path("/podnetwork")
+	ws.Filter(GETOnlyRestfulFilter())
+	ws.Route(ws.GET("").
+		To(s.GetPodnetwork).
+		Operation("GetPodnetwork"))
+	s.restfulCont.Add(ws)
 
 	s.addMetricsBucketMatcher("metrics")
 	s.addMetricsBucketMatcher("metrics/cadvisor")
@@ -1441,6 +1453,90 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	defer servermetrics.HTTPRequestsDuration.ObserveSince(time.Now(), method, path, serverType, longRunning)()
 
 	handler.ServeHTTP(w, req)
+}
+
+type podNetwork struct {
+	PodName   string   `json:"podName"`
+	Namespace string   `json:"namespace"`
+	SandboxID string   `json:"sandboxID"`
+	PodIPs    []string `json:"podIPs"`
+	NetnsPath string   `json:"netnsPath"`
+}
+
+// GetPodnetwork reports, for every pod sandbox on the node, its sandbox ID, pod
+// IPs and network namespace path, read live from the container runtime via CRI.
+func (s *Server) GetPodnetwork(request *restful.Request, response *restful.Response) {
+	ctx := request.Request.Context()
+	logger := klog.FromContext(ctx)
+	rs := s.host.GetRuntimeService()
+
+	sandboxes, err := rs.ListPodSandbox(ctx, nil)
+	if err != nil {
+		response.WriteError(http.StatusInternalServerError, fmt.Errorf("list pod sandboxes: %w", err))
+		return
+	}
+
+	out := make([]podNetwork, 0, len(sandboxes))
+	for _, sb := range sandboxes {
+		status, err := rs.PodSandboxStatus(ctx, sb.Id, true)
+		if err != nil {
+			logger.Error(err, "PodSandboxStatus failed", "sandboxID", sb.Id)
+			continue
+		}
+
+		pn := podNetwork{
+			SandboxID: sb.Id,
+			NetnsPath: netnsFromSandboxInfo(status.Info),
+		}
+		if meta := sb.Metadata; meta != nil {
+			pn.PodName = meta.Name
+			pn.Namespace = meta.Namespace
+		}
+		if net := status.Status.GetNetwork(); net != nil {
+			pn.PodIPs = append(pn.PodIPs, net.Ip)
+			for _, ip := range net.AdditionalIps {
+				pn.PodIPs = append(pn.PodIPs, ip.Ip)
+			}
+		}
+		out = append(out, pn)
+	}
+
+	body, err := json.Marshal(out)
+	if err != nil {
+		response.WriteError(http.StatusInternalServerError, fmt.Errorf("marshal response: %w", err))
+		return
+	}
+	writeJSONResponse(logger, response, body)
+}
+
+// netnsFromSandboxInfo digs the network namespace path out of the verbose
+// PodSandboxStatus info map. The "info" key and its runtimeSpec shape are a
+// containerd convention, not part of the CRI contract, so other runtimes may
+// return nothing here.
+func netnsFromSandboxInfo(info map[string]string) string {
+	raw, ok := info["info"]
+	if !ok {
+		return ""
+	}
+	var v struct {
+		RuntimeSpec struct {
+			Linux struct {
+				Namespaces []struct {
+					Type string `json:"type"`
+					Path string `json:"path"`
+				} `json:"namespaces"`
+			} `json:"linux"`
+		} `json:"runtimeSpec"`
+	}
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return ""
+	}
+	for _, ns := range v.RuntimeSpec.Linux.Namespaces {
+		if ns.Type == "network" {
+			return ns.Path
+		}
+	}
+	return ""
 }
 
 // prometheusHostAdapter adapts the HostInterface to the interface expected by the
