@@ -31,6 +31,7 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	internalapi "k8s.io/cri-api/pkg/apis"
 	"k8s.io/kubernetes/pkg/kubelet/cm"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/kubeletconfig"
@@ -223,6 +224,11 @@ func (kl *Kubelet) getPodResourcesDir() string {
 // getPodsAPIDir returns the full path to the directory containing the pods API socket
 func (kl *Kubelet) getPodsAPIDir() string {
 	return filepath.Join(kl.getRootDir(), kubeletconfig.DefaultKubeletPodsAPIDirName)
+}
+
+// GetRuntimeService returns the CRI runtime service the kubelet talks to.
+func (kl *Kubelet) GetRuntimeService() internalapi.RuntimeService {
+	return kl.runtimeService
 }
 
 // GetPods returns all pods bound to the kubelet and their spec, and the mirror
