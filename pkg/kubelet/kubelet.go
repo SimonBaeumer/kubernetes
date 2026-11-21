@@ -3628,6 +3628,16 @@ func (kl *Kubelet) ListPodSandboxMetrics(ctx context.Context) ([]*runtimeapi.Pod
 	return kl.containerRuntime.ListPodSandboxMetrics(ctx)
 }
 
+// ListPodSandbox lists all pod sandboxes known to the container runtime.
+func (kl *Kubelet) ListPodSandbox(ctx context.Context) ([]*runtimeapi.PodSandbox, error) {
+	return kl.runtimeService.ListPodSandbox(ctx, nil)
+}
+
+// PodSandboxStatus returns the status of the given pod sandbox from the container runtime.
+func (kl *Kubelet) PodSandboxStatus(ctx context.Context, podSandboxID string, verbose bool) (*runtimeapi.PodSandboxStatusResponse, error) {
+	return kl.runtimeService.PodSandboxStatus(ctx, podSandboxID, verbose)
+}
+
 func (kl *Kubelet) supportLocalStorageCapacityIsolation() bool {
 	return kl.GetConfiguration().LocalStorageCapacityIsolation
 }

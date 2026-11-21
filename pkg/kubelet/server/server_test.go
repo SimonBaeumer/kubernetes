@@ -58,7 +58,6 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
 	remotecommand "k8s.io/client-go/tools/remotecommand"
-	internalapi "k8s.io/cri-api/pkg/apis"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/ktesting"
 	statsapi "k8s.io/kubelet/pkg/apis/stats/v1alpha1"
@@ -113,11 +112,6 @@ type fakeKubelet struct {
 	loopEntryTime     time.Time
 	plegHealth        bool
 	streamingRuntime  streaming.Server
-	runtimeService    internalapi.RuntimeService
-}
-
-func (fk *fakeKubelet) GetRuntimeService() internalapi.RuntimeService {
-	return fk.runtimeService
 }
 
 func (fk *fakeKubelet) LatestLoopEntryTime() time.Time {
@@ -186,6 +180,14 @@ func (fk *fakeKubelet) ListMetricDescriptors(ctx context.Context) ([]*runtimeapi
 }
 
 func (fk *fakeKubelet) ListPodSandboxMetrics(ctx context.Context) ([]*runtimeapi.PodSandboxMetrics, error) {
+	return nil, nil
+}
+
+func (fk *fakeKubelet) ListPodSandbox(ctx context.Context) ([]*runtimeapi.PodSandbox, error) {
+	return nil, nil
+}
+
+func (fk *fakeKubelet) PodSandboxStatus(ctx context.Context, podSandboxID string, verbose bool) (*runtimeapi.PodSandboxStatusResponse, error) {
 	return nil, nil
 }
 

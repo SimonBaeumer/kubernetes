@@ -77,7 +77,6 @@ import (
 	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/component-base/metrics/prometheus/slis"
 	zpagesfeatures "k8s.io/component-base/zpages/features"
-	internalapi "k8s.io/cri-api/pkg/apis"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/cri-client/pkg/util"
 	"k8s.io/cri-streaming/pkg/streaming"
@@ -342,7 +341,8 @@ type HostInterface interface {
 	ListPodSandboxMetrics(ctx context.Context) ([]*runtimeapi.PodSandboxMetrics, error)
 	GetAllocatedPods() ([]*v1.Pod, error)
 	GetAllocatedPodByName(namespace, name string) (*v1.Pod, error)
-	GetRuntimeService() internalapi.RuntimeService
+	ListPodSandbox(ctx context.Context) ([]*runtimeapi.PodSandbox, error)
+	PodSandboxStatus(ctx context.Context, podSandboxID string, verbose bool) (*runtimeapi.PodSandboxStatusResponse, error)
 }
 
 // NewServer initializes and configures a kubelet.Server object to handle HTTP requests.
@@ -1468,9 +1468,7 @@ type podNetwork struct {
 func (s *Server) GetPodnetwork(request *restful.Request, response *restful.Response) {
 	ctx := request.Request.Context()
 	logger := klog.FromContext(ctx)
-	rs := s.host.GetRuntimeService()
-
-	sandboxes, err := rs.ListPodSandbox(ctx, nil)
+	sandboxes, err := s.host.ListPodSandbox(ctx)
 	if err != nil {
 		response.WriteError(http.StatusInternalServerError, fmt.Errorf("list pod sandboxes: %w", err))
 		return
@@ -1478,7 +1476,7 @@ func (s *Server) GetPodnetwork(request *restful.Request, response *restful.Respo
 
 	out := make([]podNetwork, 0, len(sandboxes))
 	for _, sb := range sandboxes {
-		status, err := rs.PodSandboxStatus(ctx, sb.Id, true)
+		status, err := s.host.PodSandboxStatus(ctx, sb.Id, true)
 		if err != nil {
 			logger.Error(err, "PodSandboxStatus failed", "sandboxID", sb.Id)
 			continue
